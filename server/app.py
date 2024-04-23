@@ -1,99 +1,67 @@
 #!/usr/bin/env python3
-from flask import Flask, request, session, jsonify
-from flask_restful import Resource, Api
-from flask_sqlalchemy import SQLAlchemy
-import hashlib
 
-app = Flask(__name__)
-api = Api(app)
+from flask import request, session
+from flask_restful import Resource
 
-# Configure your database connection
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'  # SQLite database
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+from config import app, db, api
+from models import User
 
-# Initialize SQLAlchemy
-db = SQLAlchemy(app)
-
-# Define your database model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    hashed_password = db.Column(db.String(64), nullable=False)
-
-# Create the database tables (this is optional if you're using SQLite and the database file doesn't exist yet)
-with app.app_context():
-    db.create_all()
-    
 class ClearSession(Resource):
+
     def delete(self):
+    
         session['page_views'] = None
         session['user_id'] = None
+
         return {}, 204
 
 class Signup(Resource):
+    
     def post(self):
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-
-        # Simulated password hashing
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
-
-        # Create a new User object
-        new_user = User(username=username, hashed_password=hashed_password)
-
-        # Add the new user to the database
-        db.session.add(new_user)
+        json = request.get_json()
+        user = User(
+            username=json['username']
+        )
+        user.password_hash = json['password']
+        db.session.add(user)
         db.session.commit()
-
-        return jsonify({
-            'id': new_user.id,
-            'username': new_user.username
-        })
+        return user.to_dict(), 201
 
 class CheckSession(Resource):
     def get(self):
-        user_id = session.get('user_id')
-        if user_id:
-            user = User.query.get(user_id)
-            return jsonify({
-                'id': user.id,
-                'username': user.username
-            })
-        else:
-            return '', 204
+        
+        if session.get('user_id'):
+            user = User.query.filter(User.id == session['user_id']).first()
+            return user.to_dict(), 200
+        return {}, 204
 
 class Login(Resource):
-    def post(self):
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
+        def post(self):
 
-        # Simulated password hashing
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            username = request.get_json()['username']
+            password = request.get_json()['password']
 
-        # Check if user exists and password matches
-        user = User.query.filter_by(username=username, hashed_password=hashed_password).first()
-        if user:
-            # Simulated session storage
-            session['user_id'] = user.id
-            return jsonify({
-                'id': user.id,
-                'username': user.username
-            })
+            user = User.query.filter(User.username == username).first()
 
-        return 'Invalid username or password', 401
+            if user.authenticate(password):
+
+                session['user_id'] = user.id
+                return user.to_dict(), 200
+
+            return {'error': '401 Unauthorized'}, 401
 
 class Logout(Resource):
     def delete(self):
-        session.pop('user_id', None)
-        return '', 200
 
-api.add_resource(Signup, '/signup')
-api.add_resource(CheckSession, '/check_session')
-api.add_resource(Login, '/login')
-api.add_resource(Logout, '/logout')
+        session['user_id'] = None
+
+        return {}, 204
+
+api.add_resource(ClearSession, '/clear', endpoint='clear')
+api.add_resource(Signup, '/signup', endpoint='signup')
+api.add_resource(CheckSession, '/check_session', endpoint='check_session')
+api.add_resource(Login, '/login', endpoint='login')
+api.add_resource(Logout, '/logout', endpoint='logout')
 
 if __name__ == '__main__':
-    app.secret_key = 'super_secret_key'
-    app.run(debug=True)
+    app.run(port=5555, debug=True)
